@@ -3,15 +3,18 @@
 # Run on the device as root.
 #
 # Quick install (repo already cloned):
-#   sudo bash install.sh --token 123456:ABC --cookie-file cookie.txt
+#   sudo bash install.sh
 #
 # Quick install (direct from GitHub):
 #   curl -fsSL <RAW>/install.sh -o /tmp/i.sh
-#   sudo bash /tmp/i.sh --token 123456:ABC
+#   sudo bash /tmp/i.sh
+#
+# Tanpa argumen, installer menanyakan token bot (wajib) dan cookie EarnApp.
+# Setiap device HARUS punya token bot sendiri (buat di @BotFather).
 #
 # Options:
-#   --token TOKEN          Telegram bot token (required, unique per node)
-#   --chat ID              Telegram chat id to lock to (default 5563427435)
+#   --token TOKEN          Telegram bot token (unique per node; asked if omitted)
+#   --chat ID              lock bot to one chat (default: auto-lock ke chat pertama)
 #   --cookie-file FILE     file with the EarnApp Cookie header
 #   --blacklist-file FILE  file with banned IPs, one per line
 #   --auto on|off          auto-rotate on ban (default on)
@@ -23,7 +26,7 @@ set -u
 RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com/lukmandroidxxx/openstick-earnapp-bot/main}"
 
 TOKEN=""
-CHAT="5563427435"
+CHAT=""
 COOKIE_FILE=""
 BLACKLIST_FILE=""
 AUTO="1"
@@ -61,7 +64,63 @@ if [ "$UNINSTALL" = "1" ]; then
   exit 0
 fi
 
+# --- token bot: wajib, unik per device --------------------------------
+valid_token() {
+  case "$1" in
+    *[!0-9]*:*) : ;;
+    *) return 1 ;;
+  esac
+  case "$1" in
+    *:*[A-Za-z0-9_-]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ -z "$TOKEN" ] && [ -t 0 ]; then
+  echo
+  echo "Setiap device butuh token bot Telegram sendiri."
+  echo "Buat bot baru di @BotFather (/newbot), lalu tempel token-nya di sini."
+  while :; do
+    printf 'Bot token: '
+    read -r TOKEN
+    [ -n "$TOKEN" ] && break
+    echo "Token tidak boleh kosong."
+  done
+fi
+
 [ -n "$TOKEN" ] || die "--token is required (create one with @BotFather)"
+
+if ! valid_token "$TOKEN"; then
+  die "format token tidak valid (contoh: 123456789:AAH...)"
+fi
+
+if [ -t 1 ]; then
+  ME="$(curl -fsS --max-time 12 "https://api.telegram.org/bot$TOKEN/getMe" 2>/dev/null || true)"
+  case "$ME" in
+    *'"ok":true'*)
+      BOT_USER="$(printf '%s' "$ME" | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')"
+      say "token valid: @${BOT_USER:-bot}"
+      ;;
+    *'"ok":false'*)
+      die "token ditolak Telegram (401). Cek lagi token dari @BotFather."
+      ;;
+    *)
+      echo "WARN: tidak bisa verifikasi token (offline?). Lanjut install."
+      ;;
+  esac
+fi
+
+# --- cookie EarnApp: opsional, boleh sama untuk semua node ------------
+if [ -z "$COOKIE_FILE" ] && [ ! -s /etc/tg-bot/cookie ] && [ -t 0 ]; then
+  echo
+  echo "Cookie EarnApp (header 'Cookie' dari dashboard), kosongkan untuk lewati:"
+  printf 'Cookie: '
+  read -r COOKIE_LINE
+  if [ -n "$COOKIE_LINE" ]; then
+    printf '%s\n' "$COOKIE_LINE" > /tmp/tg-cookie-prompt
+    COOKIE_FILE="/tmp/tg-cookie-prompt"
+  fi
+fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/bot"
@@ -89,8 +148,11 @@ install -m 644 "$SRC/tg-bot.service" /etc/systemd/system/tg-bot.service
 mkdir -p /etc/tg-bot /var/lib/tg-bot
 
 printf '%s\n' "$TOKEN" > /etc/tg-bot/token
-printf '%s\n' "$CHAT" > /etc/tg-bot/chat_id
-chmod 600 /etc/tg-bot/token /etc/tg-bot/chat_id
+if [ -n "$CHAT" ]; then
+  printf '%s\n' "$CHAT" > /etc/tg-bot/chat_id
+fi
+chmod 600 /etc/tg-bot/token
+[ -f /etc/tg-bot/chat_id ] && chmod 600 /etc/tg-bot/chat_id
 case "$AUTO" in
   off|0|no|false) echo 0 > /etc/tg-bot/auto_ghost ;;
   *) echo 1 > /etc/tg-bot/auto_ghost ;;
@@ -100,6 +162,7 @@ if [ -n "$COOKIE_FILE" ]; then
   [ -f "$COOKIE_FILE" ] || die "cookie file not found: $COOKIE_FILE"
   install -m 600 "$COOKIE_FILE" /etc/tg-bot/cookie
 fi
+rm -f /tmp/tg-cookie-prompt
 if [ -n "$BLACKLIST_FILE" ]; then
   [ -f "$BLACKLIST_FILE" ] || die "blacklist file not found: $BLACKLIST_FILE"
   install -m 644 "$BLACKLIST_FILE" /etc/tg-bot/ip_blacklist
@@ -151,6 +214,7 @@ print("mac    :", m.read_file("/sys/class/net/wlan0/address") or "-")
 print("pub ip :", m.public_ip() or "-")
 print("auto   :", m.read_file("/etc/tg-bot/auto_ghost"))
 print("cookie :", "yes" if m.read_file("/etc/tg-bot/cookie") else "no")
+print("chat   :", m.read_file("/etc/tg-bot/chat_id") or "auto-lock (kirim /start pertama kali)")
 print("banned :", len(m.read_blacklist()))
 PY
 echo

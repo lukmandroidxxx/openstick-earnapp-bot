@@ -46,41 +46,32 @@ rollback ke IP lama yang banned.
 
 ## Instalasi di device
 
-> **Repo ini privat.** Clone butuh Personal Access Token (PAT) GitHub dengan
-> scope `repo`. Buat di **github.com/settings/tokens** lalu pakai seperti
-> contoh di bawah (token hanya dipakai sekali untuk clone).
-
 ### 1. Clone repo
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git
-git clone https://<USERNAME>:<PAT>@github.com/lukmandroidxxx/openstick-earnapp-bot.git
-cd REPO
+git clone https://github.com/lukmandroidxxx/openstick-earnapp-bot.git
+cd openstick-earnapp-bot
 ```
-
-Setelah clone, hapus token dari remote (biar tidak tersimpan):
-
-```bash
-git remote set-url origin https://github.com/lukmandroidxxx/openstick-earnapp-bot.git
-```
-
-Alternatif di device: `gh auth login` lalu `gh repo clone lukmandroidxxx/openstick-earnapp-bot`.
 
 ### 2. Jalankan installer
 
 ```bash
-sudo bash install.sh \
-  --token 123456789:AA...token_bot_ini \
-  --chat 5563427435 \
-  --cookie-file cookie.txt \
-  --blacklist-file blacklist.txt
+sudo bash install.sh
 ```
 
-`cookie.txt` = header `Cookie` lengkap dari dashboard EarnApp
-(F12 → Network → request `/api/session` → copy header `Cookie`).
-Cookie bersifat **satu akun** dan boleh dipakai di banyak node.
+Installer akan menanyakan:
 
-`blacklist.txt` = daftar IP banned, satu per baris (opsional).
+1. **Bot token** — wajib, **satu token untuk satu device**
+   (buat di [@BotFather](https://t.me/BotFather) → `/newbot`).
+   Token diverifikasi ke Telegram sebelum dipakai.
+2. **Cookie EarnApp** — tempel header `Cookie` dari dashboard
+   (F12 → Network → request `/api/session` → copy header `Cookie`).
+   Cookie bersifat **satu akun** dan **boleh sama** untuk semua node.
+   Kosongkan kalau belum ada; nanti bisa kirim `/setcookie` ke bot.
+
+Setelah bot jalan, kirim `/start` sekali dari Telegram. Kalau `--chat`
+tidak diisi, bot otomatis mengunci ke chat pertama yang mengirim perintah.
 
 ### 3. Tes
 
@@ -90,21 +81,15 @@ harus hijau.
 ### Instalasi langsung tanpa clone
 
 ```bash
-export GITHUB_TOKEN=<PAT>          # repo privat, butuh token
-curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/lukmandroidxxx/openstick-earnapp-bot/main/install.sh \
-  -o /tmp/i.sh
-sudo GITHUB_TOKEN="$GITHUB_TOKEN" bash /tmp/i.sh \
-  --token 123456789:AA... --cookie-file /root/cookie.txt
+curl -fsSL https://raw.githubusercontent.com/lukmandroidxxx/openstick-earnapp-bot/main/install.sh -o /tmp/i.sh
+sudo bash /tmp/i.sh
 ```
-
-> Ganti `lukmandroidxxx/openstick-earnapp-bot` sesuai repo ini.
 
 ### Opsi installer
 
 ```
---token TOKEN          token bot (wajib, unik per node)
---chat ID              chat id yang diizinkan (default 5563427435)
+--token TOKEN          token bot (unik per node; ditanyakan kalau kosong)
+--chat ID              kunci bot ke satu chat id (default: auto-lock)
 --cookie-file FILE     file cookie EarnApp
 --blacklist-file FILE  file IP banned
 --auto on|off          auto-rotate (default on)
@@ -120,7 +105,14 @@ sudo GITHUB_TOKEN="$GITHUB_TOKEN" bash /tmp/i.sh \
 install bot baru, set token/cookie/blacklist, base setup, lalu verifikasi.
 
 ```powershell
-python deploy_node.py --host 192.168.200.1 ^
+python deploy_node.py --host 192.168.100.1
+# token ditanyakan di terminal (satu token per node)
+```
+
+Atau langsung:
+
+```powershell
+python deploy_node.py --host 192.168.100.1 ^
   --token 123456:TOKEN_NODE_INI ^
   --cookie-file ea_cookie.txt ^
   --blacklist-file blacklist.txt
@@ -131,15 +123,16 @@ Yang dilakukan:
 1. Backup + hapus bot/otomasi lama (`telegram-remote`, `ghoster`,
    `filter_ip`, watchdog lama, cron reboot 05:00, dll) ke
    `/root/old-bot-backup/`
-2. Install bot + systemd unit + token + chat id + cookie + blacklist
+2. Install bot + systemd unit + token + cookie + blacklist
 3. Timezone `Asia/Jakarta`, Wi-Fi powersave off, watchdog, LED
 4. Enable + start + verifikasi (uuid, MAC, IP publik, service)
 
 Gunakan `--no-clean` untuk mempertahankan file lama, `--no-base` untuk
-melewati langkah 3.
+melewati langkah 3, `--chat ID` kalau ingin langsung mengunci chat.
 
 > **Satu node = satu token bot.** Buat bot baru di @BotFather untuk tiap
-> OpenStick. Chat id tetap sama, jadi semua bot masuk ke chat Anda.
+> OpenStick. Kalau `--chat` tidak diisi, tiap bot mengunci sendiri ke chat
+> pertama yang mengirim `/start`.
 
 ---
 

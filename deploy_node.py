@@ -202,10 +202,10 @@ echo "BASE_DONE"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", required=True, help="node IP (e.g. 192.168.200.1)")
-    ap.add_argument("--token", required=True,
-                    help="Telegram bot token (unique per node)")
-    ap.add_argument("--chat", default="5563427435",
-                    help="Telegram chat id to lock to")
+    ap.add_argument("--token",
+                    help="Telegram bot token (unique per node; asked if omitted)")
+    ap.add_argument("--chat", default="",
+                    help="lock bot to one chat id (default: auto-lock to first /start)")
     ap.add_argument("--cookie-file",
                     help="file containing the EarnApp Cookie header")
     ap.add_argument("--blacklist-file",
@@ -220,6 +220,15 @@ def main():
     ap.add_argument("--no-base", action="store_true",
                     help="skip timezone / powersave / watchdog / LEDs")
     a = ap.parse_args()
+
+    token = (a.token or "").strip()
+    if not token:
+        print("Setiap node butuh token bot sendiri (buat di @BotFather).")
+        while not token:
+            token = input("Bot token: ").strip()
+    if ":" not in token or not token.split(":", 1)[0].isdigit():
+        sys.exit("format token tidak valid (contoh: 123456789:AAH...)")
+    a.token = token
 
     if not os.path.exists(BOT_SRC):
         sys.exit("tgbot.py not found next to this script")
@@ -259,8 +268,13 @@ def main():
         "install -m 644 /tmp/tg-bot.service /etc/systemd/system/tg-bot.service",
         "mkdir -p /etc/tg-bot /var/lib/tg-bot",
         "install -m 600 /tmp/tg-token /etc/tg-bot/token",
-        "printf '%s\\n' '%s' > /etc/tg-bot/chat_id" % ("%s", a.chat),
-        "chmod 600 /etc/tg-bot/chat_id",
+    ]
+    if a.chat:
+        steps += [
+            "printf '%s\\n' '%s' > /etc/tg-bot/chat_id" % ("%s", a.chat),
+            "chmod 600 /etc/tg-bot/chat_id",
+        ]
+    steps += [
         "echo %d > /etc/tg-bot/auto_ghost" % (0 if a.no_auto else 1),
     ]
     if cookie:
