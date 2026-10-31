@@ -65,6 +65,18 @@ if [ "$UNINSTALL" = "1" ]; then
 fi
 
 # --- token bot: wajib, unik per device --------------------------------
+prompt_read() {  # $1 = prompt; jawaban di $REPLY (bisa lewat /dev/tty)
+  if [ -t 0 ]; then
+    printf '%s' "$1"
+    IFS= read -r REPLY
+  elif [ -r /dev/tty ]; then
+    printf '%s' "$1" > /dev/tty
+    IFS= read -r REPLY < /dev/tty
+  else
+    return 1
+  fi
+}
+
 valid_token() {
   case "$1" in
     *[!0-9]*:*) : ;;
@@ -76,13 +88,13 @@ valid_token() {
   esac
 }
 
-if [ -z "$TOKEN" ] && [ -t 0 ]; then
+if [ -z "$TOKEN" ]; then
   echo
   echo "Setiap device butuh token bot Telegram sendiri."
   echo "Buat bot baru di @BotFather (/newbot), lalu tempel token-nya di sini."
   while :; do
-    printf 'Bot token: '
-    read -r TOKEN
+    prompt_read "Bot token: " || die "--token is required (create one with @BotFather)"
+    TOKEN="$REPLY"
     [ -n "$TOKEN" ] && break
     echo "Token tidak boleh kosong."
   done
@@ -111,14 +123,15 @@ if [ -t 1 ]; then
 fi
 
 # --- cookie EarnApp: opsional, boleh sama untuk semua node ------------
-if [ -z "$COOKIE_FILE" ] && [ ! -s /etc/tg-bot/cookie ] && [ -t 0 ]; then
+if [ -z "$COOKIE_FILE" ] && [ ! -s /etc/tg-bot/cookie ]; then
   echo
   echo "Cookie EarnApp (header 'Cookie' dari dashboard), kosongkan untuk lewati:"
-  printf 'Cookie: '
-  read -r COOKIE_LINE
-  if [ -n "$COOKIE_LINE" ]; then
-    printf '%s\n' "$COOKIE_LINE" > /tmp/tg-cookie-prompt
-    COOKIE_FILE="/tmp/tg-cookie-prompt"
+  if prompt_read "Cookie: "; then
+    COOKIE_LINE="$REPLY"
+    if [ -n "$COOKIE_LINE" ]; then
+      printf '%s\n' "$COOKIE_LINE" > /tmp/tg-cookie-prompt
+      COOKIE_FILE="/tmp/tg-cookie-prompt"
+    fi
   fi
 fi
 
