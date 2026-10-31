@@ -90,9 +90,12 @@ harus hijau.
 ### Instalasi langsung tanpa clone
 
 ```bash
-curl -fsSL -H "Authorization: token <PAT>" \
-  https://raw.githubusercontent.com/lukmandroidxxx/openstick-earnapp-bot/main/install.sh -o /tmp/i.sh
-sudo bash /tmp/i.sh --token 123456789:AA... --cookie-file /root/cookie.txt
+export GITHUB_TOKEN=<PAT>          # repo privat, butuh token
+curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/lukmandroidxxx/openstick-earnapp-bot/main/install.sh \
+  -o /tmp/i.sh
+sudo GITHUB_TOKEN="$GITHUB_TOKEN" bash /tmp/i.sh \
+  --token 123456789:AA... --cookie-file /root/cookie.txt
 ```
 
 > Ganti `lukmandroidxxx/openstick-earnapp-bot` sesuai repo ini.
