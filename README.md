@@ -54,17 +54,17 @@ rollback ke IP lama yang banned.
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git
-git clone https://<USERNAME>:<PAT>@github.com/OWNER/REPO.git
+git clone https://<USERNAME>:<PAT>@github.com/lukmandroidxxx/openstick-earnapp-bot.git
 cd REPO
 ```
 
 Setelah clone, hapus token dari remote (biar tidak tersimpan):
 
 ```bash
-git remote set-url origin https://github.com/OWNER/REPO.git
+git remote set-url origin https://github.com/lukmandroidxxx/openstick-earnapp-bot.git
 ```
 
-Alternatif di device: `gh auth login` lalu `gh repo clone OWNER/REPO`.
+Alternatif di device: `gh auth login` lalu `gh repo clone lukmandroidxxx/openstick-earnapp-bot`.
 
 ### 2. Jalankan installer
 
@@ -91,11 +91,11 @@ harus hijau.
 
 ```bash
 curl -fsSL -H "Authorization: token <PAT>" \
-  https://raw.githubusercontent.com/OWNER/REPO/main/install.sh -o /tmp/i.sh
+  https://raw.githubusercontent.com/lukmandroidxxx/openstick-earnapp-bot/main/install.sh -o /tmp/i.sh
 sudo bash /tmp/i.sh --token 123456789:AA... --cookie-file /root/cookie.txt
 ```
 
-> Ganti `OWNER/REPO` sesuai repo ini.
+> Ganti `lukmandroidxxx/openstick-earnapp-bot` sesuai repo ini.
 
 ### Opsi installer
 

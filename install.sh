@@ -20,7 +20,7 @@
 #   -h, --help             show this help
 
 set -u
-RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com/OWNER/REPO/main}"
+RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com/lukmandroidxxx/openstick-earnapp-bot/main}"
 
 TOKEN=""
 CHAT="5563427435"
