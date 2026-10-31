@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenStick Wi-Fi watchdog
+After=NetworkManager.service network-online.target
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/openstick-wifi-watchdog
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

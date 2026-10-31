@@ -1,0 +1,20 @@
+# secrets
+cookie.txt
+ea_cookie.txt
+token.txt
+*.cookie
+
+# real blacklist (optional)
+blacklist.txt
+
+# python
+__pycache__/
+*.pyc
+
+# os
+.DS_Store
+Thumbs.db
+
+# local
+_old/
+*.log

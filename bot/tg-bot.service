@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenStick Telegram bot
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/tg-bot/token
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/tg-bot.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target

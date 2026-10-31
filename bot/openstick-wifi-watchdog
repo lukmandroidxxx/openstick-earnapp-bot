@@ -1,0 +1,33 @@
+#!/bin/bash
+# OpenStick Wi-Fi watchdog: reconnect wlan0 when it loses IP/internet.
+IF=wlan0
+LOG=/var/log/openstick-wifi-watchdog.log
+FAILS=0
+
+log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+[ -f "$LOG" ] && [ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -gt 1048576 ] && : > "$LOG"
+
+while true; do
+    sleep 30
+    # a MAC rotation intentionally drops the link for ~15-30 s; tolerate it
+    if ip -4 -o addr show "$IF" 2>/dev/null | grep -q 'inet '; then
+        if curl -s --max-time 8 -o /dev/null https://api.ipify.org; then
+            FAILS=0
+            continue
+        fi
+    fi
+    FAILS=$((FAILS + 1))
+    log "no connectivity (fails=$FAILS)"
+    if [ "$FAILS" -eq 3 ]; then
+        PROF=$(nmcli -t -f NAME,TYPE con show --active 2>/dev/null | grep ':802-11-wireless$' | head -1 | cut -d: -f1)
+        [ -z "$PROF" ] && PROF=$(nmcli -t -f NAME,TYPE con show 2>/dev/null | grep ':802-11-wireless$' | head -1 | cut -d: -f1)
+        if [ -n "$PROF" ]; then
+            log "bringing up '$PROF'"
+            nmcli con up "$PROF" >/dev/null 2>&1
+        fi
+    elif [ "$FAILS" -ge 6 ]; then
+        log "restarting NetworkManager"
+        systemctl restart NetworkManager
+        FAILS=0
+    fi
+done

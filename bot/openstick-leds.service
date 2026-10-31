@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenStick status LED triggers
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'i=0; while [ $i -lt 60 ]; do grep -q phy0tx /sys/class/leds/green:wlan/trigger 2>/dev/null && break; i=$((i+1)); sleep 1; done; echo phy0tx > /sys/class/leds/green:wlan/trigger 2>/dev/null; echo phy0rx > /sys/class/leds/blue:wan/trigger 2>/dev/null; echo default-on > /sys/class/leds/red:power/trigger 2>/dev/null; true'
+
+[Install]
+WantedBy=multi-user.target
