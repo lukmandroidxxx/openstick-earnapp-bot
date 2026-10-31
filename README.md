@@ -46,13 +46,25 @@ rollback ke IP lama yang banned.
 
 ## Instalasi di device
 
+> **Repo ini privat.** Clone butuh Personal Access Token (PAT) GitHub dengan
+> scope `repo`. Buat di **github.com/settings/tokens** lalu pakai seperti
+> contoh di bawah (token hanya dipakai sekali untuk clone).
+
 ### 1. Clone repo
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git
-git clone https://github.com/OWNER/REPO.git
+git clone https://<USERNAME>:<PAT>@github.com/OWNER/REPO.git
 cd REPO
 ```
+
+Setelah clone, hapus token dari remote (biar tidak tersimpan):
+
+```bash
+git remote set-url origin https://github.com/OWNER/REPO.git
+```
+
+Alternatif di device: `gh auth login` lalu `gh repo clone OWNER/REPO`.
 
 ### 2. Jalankan installer
 
@@ -78,7 +90,8 @@ harus hijau.
 ### Instalasi langsung tanpa clone
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh -o /tmp/i.sh
+curl -fsSL -H "Authorization: token <PAT>" \
+  https://raw.githubusercontent.com/OWNER/REPO/main/install.sh -o /tmp/i.sh
 sudo bash /tmp/i.sh --token 123456789:AA... --cookie-file /root/cookie.txt
 ```
 

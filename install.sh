@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
     --auto) AUTO="${2:-1}"; shift 2 ;;
     --no-base) BASE="0"; shift ;;
     --uninstall) UNINSTALL="1"; shift ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -73,7 +73,12 @@ if [ ! -f "$SRC/tgbot.py" ]; then
   mkdir -p "$SRC"
   for f in tgbot.py tg-bot.service openstick-wifi-watchdog \
            openstick-wifi-watchdog.service openstick-leds.service; do
-    curl -fsSL "$RAW_BASE/bot/$f" -o "$SRC/$f" || die "download failed: $f"
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
+        "$RAW_BASE/bot/$f" -o "$SRC/$f" || die "download failed: $f"
+    else
+      curl -fsSL "$RAW_BASE/bot/$f" -o "$SRC/$f" || die "download failed: $f (private repo? set GITHUB_TOKEN)"
+    fi
   done
 fi
 trap '[ -n "$TMP" ] && rm -rf "$TMP"' EXIT
