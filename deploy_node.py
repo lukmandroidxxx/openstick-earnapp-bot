@@ -28,7 +28,9 @@ import sys
 import paramiko
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BOT_SRC = os.path.join(HERE, "tgbot.py")
+BOT_SRC = os.path.join(HERE, "bot", "tgbot.py")
+if not os.path.exists(BOT_SRC):
+    BOT_SRC = os.path.join(HERE, "tgbot.py")
 
 UNIT = """[Unit]
 Description=OpenStick Telegram bot
