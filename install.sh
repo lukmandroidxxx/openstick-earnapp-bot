@@ -144,7 +144,8 @@ if [ ! -f "$SRC/tgbot.py" ]; then
   SRC="$TMP"
   mkdir -p "$SRC"
   for f in tgbot.py tg-bot.service openstick-wifi-watchdog \
-           openstick-wifi-watchdog.service openstick-leds.service; do
+           openstick-wifi-watchdog.service openstick-leds.service \
+           openstick-usbnet openstick-usbnet.service; do
     if [ -n "${GITHUB_TOKEN:-}" ]; then
       curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
         "$RAW_BASE/bot/$f" -o "$SRC/$f" || die "download failed: $f"
@@ -198,6 +199,16 @@ if [ "$BASE" = "1" ]; then
   systemctl daemon-reload
   systemctl enable openstick-wifi-watchdog.service >/dev/null 2>&1
   systemctl restart openstick-wifi-watchdog.service
+
+  # USB RNDIS -> br0 192.168.100.1 (fixes the boot race on some images)
+  if [ -f "$SRC/openstick-usbnet" ]; then
+    install -m 755 "$SRC/openstick-usbnet" /usr/local/sbin/openstick-usbnet
+    install -m 644 "$SRC/openstick-usbnet.service" \
+      /etc/systemd/system/openstick-usbnet.service
+    systemctl daemon-reload
+    systemctl enable openstick-usbnet.service >/dev/null 2>&1
+    systemctl start openstick-usbnet.service >/dev/null 2>&1
+  fi
 
   if [ -e /sys/class/leds/green:wlan ]; then
     install -m 644 "$SRC/openstick-leds.service" \

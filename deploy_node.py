@@ -31,6 +31,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BOT_SRC = os.path.join(HERE, "bot", "tgbot.py")
 if not os.path.exists(BOT_SRC):
     BOT_SRC = os.path.join(HERE, "tgbot.py")
+USB_SRC = os.path.join(HERE, "bot", "openstick-usbnet")
+USB_UNIT_SRC = os.path.join(HERE, "bot", "openstick-usbnet.service")
 
 UNIT = """[Unit]
 Description=OpenStick Telegram bot
@@ -189,6 +191,15 @@ systemctl daemon-reload
 systemctl enable openstick-wifi-watchdog.service >/dev/null 2>&1
 systemctl restart openstick-wifi-watchdog.service
 
+# USB RNDIS -> br0 192.168.100.1 (boot race fix)
+if [ -f /tmp/usbnet ]; then
+  install -m 755 /tmp/usbnet /usr/local/sbin/openstick-usbnet
+  install -m 644 /tmp/usbnet.service /etc/systemd/system/openstick-usbnet.service
+  systemctl daemon-reload
+  systemctl enable openstick-usbnet.service >/dev/null 2>&1
+  systemctl start openstick-usbnet.service >/dev/null 2>&1
+fi
+
 # LEDs (hanya kalau hardware-nya ada)
 if [ -e /sys/class/leds/green:wlan ]; then
   install -m 644 /tmp/led.service /etc/systemd/system/openstick-leds.service
@@ -254,6 +265,9 @@ def main():
     sftp.putfo(io.StringIO(WATCHDOG), "/tmp/wd")
     sftp.putfo(io.StringIO(WATCHDOG_UNIT), "/tmp/wd.service")
     sftp.putfo(io.StringIO(LED_UNIT), "/tmp/led.service")
+    if os.path.exists(USB_SRC) and os.path.exists(USB_UNIT_SRC):
+        sftp.put(USB_SRC, "/tmp/usbnet")
+        sftp.put(USB_UNIT_SRC, "/tmp/usbnet.service")
     if cookie:
         sftp.putfo(io.StringIO(cookie + "\n"), "/tmp/tg-cookie")
     if blacklist:
@@ -287,7 +301,8 @@ def main():
         steps.append(BASE_SH)
     steps += [
         "rm -f /tmp/tgbot.py /tmp/tg-bot.service /tmp/tg-token /tmp/tg-cookie "
-        "/tmp/tg-blacklist /tmp/wd /tmp/wd.service /tmp/led.service",
+        "/tmp/tg-blacklist /tmp/wd /tmp/wd.service /tmp/led.service "
+        "/tmp/usbnet /tmp/usbnet.service",
         "systemctl daemon-reload",
         "systemctl enable tg-bot >/dev/null 2>&1",
         "systemctl restart tg-bot",
