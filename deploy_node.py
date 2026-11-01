@@ -33,6 +33,7 @@ if not os.path.exists(BOT_SRC):
     BOT_SRC = os.path.join(HERE, "tgbot.py")
 USB_SRC = os.path.join(HERE, "bot", "openstick-usbnet")
 USB_UNIT_SRC = os.path.join(HERE, "bot", "openstick-usbnet.service")
+NM_CONF_SRC = os.path.join(HERE, "bot", "openstick-nm-unmanaged.conf")
 
 UNIT = """[Unit]
 Description=OpenStick Telegram bot
@@ -191,13 +192,18 @@ systemctl daemon-reload
 systemctl enable openstick-wifi-watchdog.service >/dev/null 2>&1
 systemctl restart openstick-wifi-watchdog.service
 
-# USB RNDIS -> br0 192.168.100.1 (boot race fix)
+# USB RNDIS -> br0 192.168.100.1 (boot race fix + self-healing)
 if [ -f /tmp/usbnet ]; then
   install -m 755 /tmp/usbnet /usr/local/sbin/openstick-usbnet
   install -m 644 /tmp/usbnet.service /etc/systemd/system/openstick-usbnet.service
+  if [ -f /tmp/nm-unmanaged.conf ]; then
+    mkdir -p /etc/NetworkManager/conf.d
+    install -m 644 /tmp/nm-unmanaged.conf /etc/NetworkManager/conf.d/99-openstick-unmanaged.conf
+  fi
   systemctl daemon-reload
   systemctl enable openstick-usbnet.service >/dev/null 2>&1
-  systemctl start openstick-usbnet.service >/dev/null 2>&1
+  systemctl restart openstick-usbnet.service >/dev/null 2>&1
+  systemctl reload-or-restart NetworkManager >/dev/null 2>&1 || true
 fi
 
 # LEDs (hanya kalau hardware-nya ada)
@@ -268,6 +274,8 @@ def main():
     if os.path.exists(USB_SRC) and os.path.exists(USB_UNIT_SRC):
         sftp.put(USB_SRC, "/tmp/usbnet")
         sftp.put(USB_UNIT_SRC, "/tmp/usbnet.service")
+    if os.path.exists(NM_CONF_SRC):
+        sftp.put(NM_CONF_SRC, "/tmp/nm-unmanaged.conf")
     if cookie:
         sftp.putfo(io.StringIO(cookie + "\n"), "/tmp/tg-cookie")
     if blacklist:

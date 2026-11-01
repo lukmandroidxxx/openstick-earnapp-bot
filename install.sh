@@ -156,7 +156,8 @@ if [ ! -f "$SRC/tgbot.py" ]; then
   mkdir -p "$SRC"
   for f in tgbot.py tg-bot.service openstick-wifi-watchdog \
            openstick-wifi-watchdog.service openstick-leds.service \
-           openstick-usbnet openstick-usbnet.service; do
+           openstick-usbnet openstick-usbnet.service \
+           openstick-nm-unmanaged.conf; do
     if [ -n "${GITHUB_TOKEN:-}" ]; then
       curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
         "$RAW_BASE/bot/$f" -o "$SRC/$f" || die "download failed: $f"
@@ -211,14 +212,20 @@ if [ "$BASE" = "1" ]; then
   systemctl enable openstick-wifi-watchdog.service >/dev/null 2>&1
   systemctl restart openstick-wifi-watchdog.service
 
-  # USB RNDIS -> br0 192.168.100.1 (fixes the boot race on some images)
+  # USB RNDIS -> br0 192.168.100.1 (boot race + self-healing)
   if [ -f "$SRC/openstick-usbnet" ]; then
     install -m 755 "$SRC/openstick-usbnet" /usr/local/sbin/openstick-usbnet
     install -m 644 "$SRC/openstick-usbnet.service" \
       /etc/systemd/system/openstick-usbnet.service
+    if [ -f "$SRC/openstick-nm-unmanaged.conf" ]; then
+      mkdir -p /etc/NetworkManager/conf.d
+      install -m 644 "$SRC/openstick-nm-unmanaged.conf" \
+        /etc/NetworkManager/conf.d/99-openstick-unmanaged.conf
+    fi
     systemctl daemon-reload
     systemctl enable openstick-usbnet.service >/dev/null 2>&1
-    systemctl start openstick-usbnet.service >/dev/null 2>&1
+    systemctl restart openstick-usbnet.service >/dev/null 2>&1
+    systemctl reload-or-restart NetworkManager >/dev/null 2>&1 || true
   fi
 
   if [ -e /sys/class/leds/green:wlan ]; then
