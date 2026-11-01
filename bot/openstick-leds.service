@@ -6,7 +6,7 @@ Wants=network.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'i=0; while [ $i -lt 60 ]; do grep -q phy0tx /sys/class/leds/green:wlan/trigger 2>/dev/null && break; i=$((i+1)); sleep 1; done; echo phy0tx > /sys/class/leds/green:wlan/trigger 2>/dev/null; echo phy0rx > /sys/class/leds/blue:wan/trigger 2>/dev/null; echo default-on > /sys/class/leds/red:power/trigger 2>/dev/null; true'
+ExecStart=/bin/sh -c 'setled() { [ -e "$$1/trigger" ] || return 1; grep -qw "$$2" "$$1/trigger" 2>/dev/null || return 1; echo "$$2" > "$$1/trigger" 2>/dev/null; }; i=0; while [ $$i -lt 60 ]; do grep -qw phy0tx /sys/class/leds/green:wlan/trigger 2>/dev/null && break; i=$$((i+1)); sleep 1; done; setled /sys/class/leds/green:wlan phy0tx || setled /sys/class/leds/green:wlan heartbeat; setled /sys/class/leds/blue:wan phy0rx || setled /sys/class/leds/blue:wan heartbeat; setled /sys/class/leds/red:power heartbeat || setled /sys/class/leds/red:power default-on; true'
 
 [Install]
 WantedBy=multi-user.target
