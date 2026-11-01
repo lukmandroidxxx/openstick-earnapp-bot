@@ -78,14 +78,23 @@ prompt_read() {  # $1 = prompt; jawaban di $REPLY (bisa lewat /dev/tty)
 }
 
 valid_token() {
+  # format: <bot_id>:<secret>  ->  bot_id harus angka, secret [A-Za-z0-9_-]+
   case "$1" in
-    *[!0-9]*:*) : ;;
+    *:*) ;;
     *) return 1 ;;
   esac
-  case "$1" in
-    *:*[A-Za-z0-9_-]*) return 0 ;;
-    *) return 1 ;;
+  case "${1%%:*}" in
+    ''|*[!0-9]*) return 1 ;;
   esac
+  case "${1#*:}" in
+    ''|*[!A-Za-z0-9_-]*) return 1 ;;
+  esac
+  return 0
+}
+
+trim_token() {
+  # buang spasi/newline sisa paste
+  printf '%s' "$1" | tr -d '[:space:]'
 }
 
 if [ -z "$TOKEN" ]; then
@@ -102,8 +111,10 @@ fi
 
 [ -n "$TOKEN" ] || die "--token is required (create one with @BotFather)"
 
+TOKEN="$(trim_token "$TOKEN")"
+
 if ! valid_token "$TOKEN"; then
-  die "format token tidak valid (contoh: 123456789:AAH...)"
+  die "format token tidak valid: '$(printf '%s' "$TOKEN" | cut -c1-16)...' (contoh: 123456789:AAH...)"
 fi
 
 if [ -t 1 ]; then
