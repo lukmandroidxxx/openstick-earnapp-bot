@@ -1,0 +1,47 @@
+#!/bin/bash
+# OpenStick: rotate wlan0 MAC and reconnect until the new public IP is not
+# in /etc/tg-bot/ip_blacklist. Prints the result. Safe to run remotely.
+set -u
+BL="/etc/tg-bot/ip_blacklist"
+IF=wlan0
+ATTEMPTS="${1:-3}"
+
+prof() {
+    local p
+    p=$(nmcli -t -f NAME,TYPE con show --active 2>/dev/null | grep ':802-11-wireless$' | head -1 | cut -d: -f1)
+    [ -z "$p" ] && p=$(nmcli -t -f NAME,TYPE con show 2>/dev/null | grep ':802-11-wireless$' | head -1 | cut -d: -f1)
+    printf '%s' "$p"
+}
+
+pubip() { curl -s -m 12 https://api.ipify.org 2>/dev/null; }
+
+P=$(prof)
+[ -z "$P" ] && { echo "ERROR: no wifi profile"; exit 1; }
+
+i=1
+while [ "$i" -le "$ATTEMPTS" ]; do
+    MAC=$(python3 -c "import random;print('02:%02x:%02x:%02x:%02x:%02x'%tuple(random.randrange(256) for _ in range(5)))")
+    nmcli con modify "$P" wifi.cloned-mac-address "$MAC" >/dev/null 2>&1
+    nmcli con down "$P" >/dev/null 2>&1
+    sleep 3
+    nmcli con up "$P" >/dev/null 2>&1
+    sleep 8
+    IP=$(pubip)
+    if [ -z "$IP" ]; then
+        echo "attempt $i: no internet, retry"
+    elif [ -f "$BL" ] && grep -qxF "$IP" "$BL"; then
+        echo "attempt $i: $IP blacklisted, retry"
+    else
+        echo "profile: $P"
+        echo "mac: $(cat /sys/class/net/$IF/address 2>/dev/null)"
+        echo "ip: $IP"
+        exit 0
+    fi
+    i=$((i + 1))
+done
+
+echo "profile: $P"
+echo "mac: $(cat /sys/class/net/$IF/address 2>/dev/null)"
+echo "ip: $(pubip)"
+echo "WARN: still blacklisted after $ATTEMPTS attempts"
+exit 2

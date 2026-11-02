@@ -147,10 +147,72 @@ melewati langkah 3, `--chat ID` kalau ingin langsung mengunci chat.
 /setcookie     simpan cookie dashboard
 /blacklist     IP banned yang dilewati
 /auto on|off   auto-rotate saat ban
+/all           status semua node (multi-node)
+/ghost NAMA    ghost node lain lewat Tailscale
+/restart NAMA  restart EarnApp + bot node lain
+/reboot NAMA   reboot node lain
+/sh NAMA CMD   jalankan perintah di node lain
 /id            chat id + UUID
 ```
 
 Tombol inline tersedia untuk semua perintah utama.
+
+---
+
+## Kontrol semua node dari satu bot (multi-node, Tailscale)
+
+Node OpenStick biasanya di belakang CGNAT dan Wi-Fi-nya bisa memakai
+*client isolation*, jadi IP LAN berubah dan node tidak bisa saling akses.
+Solusinya Tailscale (mesh VPN, gratis): tiap node dapat IP tetap `100.x.y.z`.
+
+1. Buat auth key di <https://login.tailscale.com/admin/settings/keys>
+   (centang *Reusable* dan *No expiry*).
+2. Di tiap node:
+
+```bash
+sudo modprobe tun
+sudo mkdir -p /dev/net
+sudo mknod /dev/net/tun c 10 200 2>/dev/null
+echo tun | sudo tee /etc/modules-load.d/tun.conf
+curl -fsSL https://tailscale.com/install.sh | sudo sh
+sudo tailscale up --authkey=tskey-auth-... --accept-dns=false --accept-routes=false
+tailscale ip -4
+```
+
+3. Buat SSH key di node yang jadi **master** (yang botnya dipakai sehari-hari):
+
+```bash
+sudo ssh-keygen -t ed25519 -N '' -f /root/.ssh/id_master
+sudo cat /root/.ssh/id_master.pub
+```
+
+Tambahkan public key itu ke `/root/.ssh/authorized_keys` node lain, dan
+pastikan `PermitRootLogin prohibit-password` aktif.
+
+4. Isi daftar node di master, satu baris per node:
+
+```
+# /etc/tg-bot/nodes
+# nama  ip_tailscale     uuid_earnapp (opsional)
+semut06 100.81.199.122   sdk-node-04eb3a051e2d4d1996240f7d11728a16
+semut05 100.114.73.122   sdk-node-facbbc9805fb475f972a5f1b514ee62c
+semut02 100.110.139.13   sdk-node-b251b4d893534a4aa9b5fa3700a788fa
+```
+
+5. Restart bot, lalu kirim `/all` di Telegram. Contoh hasil:
+
+```
+🌐 NODE LIST (3)
+🟢 semut06  100.81.199.122
+   ip 114.12.19.119 · earnapp ok · hijau 43m
+🟢 semut02  100.110.139.13
+   ip 110.136.89.211 · earnapp ok · hijau 19m
+🟢 hijau: 3/3
+```
+
+Node yang UUID-nya tidak diisi tetap dicek (online/offline + IP publik),
+hanya status hijau dashboard yang tidak muncul.
+
 
 ---
 

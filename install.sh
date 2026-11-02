@@ -157,7 +157,7 @@ if [ ! -f "$SRC/tgbot.py" ]; then
   for f in tgbot.py tg-bot.service openstick-wifi-watchdog \
            openstick-wifi-watchdog.service openstick-leds.service \
            openstick-usbnet openstick-usbnet.service \
-           openstick-nm-unmanaged.conf; do
+           openstick-ghost openstick-nm-unmanaged.conf; do
     if [ -n "${GITHUB_TOKEN:-}" ]; then
       curl -fsSL -H "Authorization: token $GITHUB_TOKEN" \
         "$RAW_BASE/bot/$f" -o "$SRC/$f" || die "download failed: $f"
@@ -171,7 +171,12 @@ trap '[ -n "$TMP" ] && rm -rf "$TMP"' EXIT
 say "installing bot files"
 install -m 755 "$SRC/tgbot.py" /usr/local/bin/tg-bot.py
 install -m 644 "$SRC/tg-bot.service" /etc/systemd/system/tg-bot.service
+if [ -f "$SRC/openstick-ghost" ]; then
+  install -m 755 "$SRC/openstick-ghost" /usr/local/sbin/openstick-ghost
+fi
 mkdir -p /etc/tg-bot /var/lib/tg-bot
+touch /etc/tg-bot/nodes
+chmod 644 /etc/tg-bot/nodes
 
 printf '%s\n' "$TOKEN" > /etc/tg-bot/token
 if [ -n "$CHAT" ]; then

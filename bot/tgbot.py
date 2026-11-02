@@ -20,6 +20,8 @@ COOKIE_FILE = os.path.join(BOT_DIR, "cookie")
 OFFSET_FILE = os.path.join(STATE_DIR, "offset")
 BLACKLIST_FILE = os.path.join(BOT_DIR, "ip_blacklist")
 AUTO_FILE = os.path.join(BOT_DIR, "auto_ghost")
+NODES_FILE = os.path.join(BOT_DIR, "nodes")
+SSH_KEY = "/root/.ssh/id_master"
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
@@ -799,6 +801,145 @@ def poweroff_now():
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+# ------------------------------------------------------------ multi-node
+# /etc/tg-bot/nodes: satu node per baris -> "nama ip_tailscale [uuid]"
+# Contoh:
+#   semut06 100.81.199.122 sdk-node-04eb3a051e2d4d1996240f7d11728a16
+NODE_CHECK = ('printf "%s|" "$(hostname)" '
+              '"$(curl -s -m 8 https://api.ipify.org)" '
+              '"$(systemctl is-active earnapp 2>&1)" '
+              '"$(systemctl is-active tg-bot 2>&1)"')
+
+
+def read_nodes():
+    nodes = []
+    for line in read_file(NODES_FILE).splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        p = line.split()
+        if len(p) >= 2:
+            nodes.append({"name": p[0], "ip": p[1],
+                          "uuid": p[2] if len(p) > 2 else ""})
+    return nodes
+
+
+def node_by_name(name):
+    for n in read_nodes():
+        if n["name"].lower() == name.lower():
+            return n
+    return None
+
+
+def remote(ip, cmd, timeout=60):
+    argv = ["ssh", "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null", "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=8", "-i", SSH_KEY, "root@" + ip, cmd]
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True,
+                           timeout=timeout)
+        return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+    except subprocess.TimeoutExpired:
+        return 1, "", "(timeout)"
+    except Exception as exc:  # noqa: BLE001
+        return 1, "", str(exc)
+
+
+def run_on(node, cmd, timeout=90):
+    if node["name"].lower() == sh("hostname").lower():
+        return 0, sh(cmd, timeout=timeout), ""
+    return remote(node["ip"], cmd, timeout=timeout)
+
+
+def all_text():
+    nodes = read_nodes()
+    if not nodes:
+        return ("\U0001F310 <b>Multi-node</b>\n\n"
+                "Belum ada daftar node.\n"
+                "Isi <code>/etc/tg-bot/nodes</code>:\n"
+                "<code>semut06 100.81.199.122 sdk-node-04eb...</code>")
+
+    devs, live = {}, {}
+    if read_file(COOKIE_FILE):
+        st, dev = ea_api("/api/devices")
+        if st == 200 and isinstance(dev, list):
+            uuids = [d.get("uuid") for d in dev
+                     if isinstance(d, dict) and d.get("uuid")]
+            st2, sts = ea_api("/api/device_statuses", "POST",
+                              {"data": {"devices": uuids}})
+            if st2 == 200 and isinstance(sts, dict):
+                for u, v in sts.items():
+                    try:
+                        live[u] = int(v[1]) if isinstance(v, list) and \
+                            len(v) > 1 else 0
+                    except (TypeError, ValueError):
+                        live[u] = 0
+            for d in dev:
+                if isinstance(d, dict):
+                    devs[d.get("uuid")] = d
+
+    results = {}
+
+    def work(n):
+        results[n["name"]] = run_on(n, NODE_CHECK, timeout=35)
+
+    threads = [threading.Thread(target=work, args=(n,), daemon=True)
+               for n in nodes]
+    for t in threads:
+        t.start()
+    deadline = time.time() + 40
+    for t in threads:
+        t.join(max(0.1, deadline - time.time()))
+
+    lines = ["\U0001F310 <b>NODE LIST</b> (%d)\n" % len(nodes)]
+    green = 0
+    for n in nodes:
+        res = results.get(n["name"])
+        if not res:
+            lines.append("\u26AA <b>%s</b> \u2014 no reply" % n["name"])
+            continue
+        _, out, err = res
+        f = out.strip().split("|")
+        host = (f[0].strip() if f and f[0].strip() else n["name"])
+        ip = f[1].strip() if len(f) > 1 and f[1].strip() else "?"
+        ea = f[2].strip() if len(f) > 2 else ""
+        active = ea == "active"
+        d = devs.get(n["uuid"]) if n["uuid"] else None
+        ban = d.get("banned") if isinstance(d, dict) else None
+        live_ms = live.get(n["uuid"], 0) if n["uuid"] else 0
+        if not active:
+            mark = "\U0001F534"
+        elif isinstance(ban, dict):
+            mark = "\U0001F6AB"
+            green += 0
+        else:
+            mark = "\U0001F7E2"
+            if n["uuid"] and live_ms > 0:
+                green += 1
+        extra = []
+        if n["uuid"]:
+            extra.append("hijau %s" % fmt_uptime(live_ms) if live_ms
+                         else "belum hijau")
+            if isinstance(ban, dict):
+                extra.append("BANNED %s" % ban.get("ip", "?"))
+        lines.append("%s <b>%s</b> <code>%s</code>\n   ip <code>%s</code>"
+                     " \u00b7 %s%s" % (
+                         mark, host, n["ip"], ip,
+                         "earnapp ok" if active else "earnapp mati",
+                         ("\n   " + " \u00b7 ".join(extra)) if extra else ""))
+    lines.append("\n\U0001F7E2 hijau: <b>%d/%d</b>" % (green, len(nodes)))
+    lines.append("Perintah: /ghost &lt;nama&gt; \u00b7 /restart &lt;nama&gt; "
+                 "\u00b7 /reboot &lt;nama&gt;")
+    text = "\n".join(lines)
+    return text[:4000]
+
+
+def nodes_help():
+    names = ", ".join(n["name"] for n in read_nodes()) or "-"
+    return "Node: %s" % names
+
+
+
 # ---------------------------------------------------------------- dispatch
 def is_authorized(chat_id):
     locked = read_file(CHAT_FILE)
@@ -857,14 +998,61 @@ def handle_message(msg):
                       "/setcookie \u2014 simpan cookie dashboard\n"
                       "/blacklist \u2014 IP yang diblokir EarnApp\n"
                       "/auto on|off \u2014 auto-ghost saat banned\n"
+                      "/all \u2014 status semua node\n"
+                      "/ghost &lt;nama&gt; \u2014 ghost node lain\n"
+                      "/restart &lt;nama&gt; \u2014 restart EarnApp+bot node\n"
+                      "/reboot &lt;nama&gt; \u2014 reboot node lain\n"
+                      "/sh &lt;nama&gt; &lt;cmd&gt; \u2014 jalankan perintah\n"
                       "/id \u2014 info device", MENU)
+    elif low.startswith("/all"):
+        send(chat_id, all_text(), MENU)
+    elif low.startswith("/sh "):
+        rest = text[4:].strip().split(None, 1)
+        if len(rest) < 2:
+            send(chat_id, "Format: <code>/sh nama perintah</code>\n" +
+                 nodes_help())
+            return
+        node = node_by_name(rest[0])
+        if not node:
+            send(chat_id, "Node tidak dikenal.\n" + nodes_help())
+            return
+        rc, out, err = run_on(node, rest[1], timeout=90)
+        body = (out or "") + (("\n" + err) if err else "")
+        send(chat_id, "<b>%s</b> rc=%s\n<pre>%s</pre>" % (
+            node["name"], rc, html.escape(body[-3000:] or "(kosong)")))
+    elif low.startswith("/restart"):
+        arg = text[len("/restart"):].strip()
+        if not arg:
+            send(chat_id, "Format: <code>/restart nama</code>\n" +
+                 nodes_help())
+            return
+        node = node_by_name(arg)
+        if not node:
+            send(chat_id, "Node tidak dikenal.\n" + nodes_help())
+            return
+        rc, out, err = run_on(
+            node, "systemctl restart earnapp tg-bot; sleep 5; "
+                  "systemctl is-active earnapp tg-bot | tr '\\n' ' '", 90)
+        send(chat_id, "\u267B\uFE0F <b>%s</b> restart: <code>%s</code>" % (
+            node["name"], html.escape((out or err or "?")[-500:])), MENU)
     elif low.startswith("/status"):
         send(chat_id, status_text(), MENU)
     elif low.startswith("/dash"):
         send(chat_id, dash_text(), MENU)
     elif low.startswith("/reboot"):
-        send(chat_id, "\u26A0\uFE0F Yakin reboot device sekarang?",
-             CONFIRM_REBOOT, reply_to=mid)
+        arg = text[len("/reboot"):].strip()
+        if arg:
+            node = node_by_name(arg)
+            if not node:
+                send(chat_id, "Node tidak dikenal.\n" + nodes_help())
+                return
+            send(chat_id, "\U0001F501 Reboot <b>%s</b>..." % node["name"])
+            run_on(node, "sync; sleep 1; systemctl reboot", 25)
+            send(chat_id, "\u2705 Reboot dikirim ke <b>%s</b>." %
+                 node["name"], MENU)
+        else:
+            send(chat_id, "\u26A0\uFE0F Yakin reboot device sekarang?",
+                 CONFIRM_REBOOT, reply_to=mid)
     elif low.startswith("/off") or low.startswith("/shutdown") or \
             low.startswith("/poweroff"):
         send(chat_id, "\u23FB <b>Matikan device?</b>\n\n"
@@ -874,11 +1062,25 @@ def handle_message(msg):
                       "Hidupkan lagi dengan mencabut lalu menyambung daya.",
              CONFIRM_OFF, reply_to=mid)
     elif low.startswith("/ghost"):
-        send(chat_id, "\U0001F47B <b>Ganti IP publik</b>\n\n"
-                      "MAC Wi-Fi diacak, koneksi diputus 15 detik lalu "
-                      "reconnect \u2014 <b>tanpa reboot</b>.\n"
-                      "\u26A0\uFE0F Selama proses, device offline \u00b120\u201360 detik.",
-             CONFIRM_GHOST, reply_to=mid)
+        arg = text[len("/ghost"):].strip()
+        if arg:
+            node = node_by_name(arg)
+            if not node:
+                send(chat_id, "Node tidak dikenal.\n" + nodes_help())
+                return
+            send(chat_id, "\U0001F47B Ghost <b>%s</b> \u2014 tunggu "
+                          "\u00b130\u201390 detik..." % node["name"])
+            rc, out, err = run_on(
+                node, "/usr/local/sbin/openstick-ghost 3", timeout=200)
+            send(chat_id, "\U0001F47B <b>%s</b>\n<pre>%s</pre>" % (
+                node["name"], html.escape((out or err)[-1500:])), MENU)
+        else:
+            send(chat_id, "\U0001F47B <b>Ganti IP publik</b>\n\n"
+                          "MAC Wi-Fi diacak, koneksi diputus 15 detik lalu "
+                          "reconnect \u2014 <b>tanpa reboot</b>.\n"
+                          "\u26A0\uFE0F Selama proses, device offline "
+                          "\u00b120\u201360 detik.", CONFIRM_GHOST,
+                 reply_to=mid)
     elif low.startswith("/setcookie"):
         val = text[len("/setcookie"):].strip()
         if not val:
