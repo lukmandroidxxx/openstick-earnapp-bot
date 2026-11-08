@@ -927,6 +927,35 @@ def all_text():
                          mark, host, n["ip"], ip,
                          "earnapp ok" if active else "earnapp mati",
                          ("\n   " + " \u00b7 ".join(extra)) if extra else ""))
+    managed = {n["uuid"] for n in nodes if n["uuid"]}
+    if devs:
+        others = [d for d in devs.values()
+                  if d.get("uuid") not in managed]
+        if others:
+            lines.append("\n\U0001F4CA <b>Device lain di akun</b> (%d)"
+                         % len(others))
+            for d in sorted(others, key=lambda x: str(x.get("title"))):
+                u = d.get("uuid")
+                ban = d.get("banned")
+                lv = live.get(u, 0)
+                if isinstance(ban, dict):
+                    st = "\U0001F6AB banned <code>%s</code>" % \
+                        ban.get("ip", "")
+                elif lv > 0:
+                    st = "\U0001F7E2 hijau %s" % fmt_uptime(lv)
+                else:
+                    st = "\u26AA idle"
+                ips = d.get("ips") or []
+                last = ips[-1] if isinstance(ips, list) and ips else "-"
+                lines.append("\u00b7 <b>%s</b> \u2014 %s \u00b7 %s" % (
+                    html.escape(str(d.get("title") or u)), st, last))
+        banned = sum(1 for d in devs.values()
+                     if isinstance(d.get("banned"), dict))
+        green_all = sum(1 for u in devs if live.get(u, 0) > 0)
+        lines.append("\nAkun: <b>%d</b> device \u00b7 \U0001F7E2 %d hijau "
+                     "\u00b7 \U0001F6AB %d banned \u00b7 \u26AA %d idle" % (
+                         len(devs), green_all, banned,
+                         len(devs) - green_all - banned))
     lines.append("\n\U0001F7E2 hijau: <b>%d/%d</b>" % (green, len(nodes)))
     lines.append("Perintah: /ghost &lt;nama&gt; \u00b7 /restart &lt;nama&gt; "
                  "\u00b7 /reboot &lt;nama&gt;")
