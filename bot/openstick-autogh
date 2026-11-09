@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Standalone auto-ghost watchdog for OpenStick (no Telegram needed).
+
+Reads the EarnApp dashboard with the account cookie and, when this device is
+banned on its current public IP, rotates the wlan0 MAC with openstick-ghost.
+Useful on nodes whose Telegram bot token is dead/absent.
+"""
+import json
+import os
+import re
+import subprocess
+import time
+import urllib.error
+import urllib.request
+
+BOT_DIR = "/etc/tg-bot"
+COOKIE_FILE = os.path.join(BOT_DIR, "cookie")
+BLACKLIST_FILE = os.path.join(BOT_DIR, "ip_blacklist")
+AUTO_FILE = os.path.join(BOT_DIR, "auto_ghost")
+STATE_DIR = "/var/lib/tg-bot"
+STAMP_FILE = os.path.join(STATE_DIR, "last_ghost")
+GHOST = "/usr/local/sbin/openstick-ghost"
+COOLDOWN = 600
+INTERVAL = 180
+
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+
+def log(*a):
+    print(time.strftime("%Y-%m-%d %H:%M:%S"), *a, flush=True)
+
+
+def read_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def public_ip():
+    for url in ("https://api.ipify.org", "https://ifconfig.co/ip",
+                "https://ipinfo.io/ip"):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                ip = r.read().decode("utf-8", "replace").strip()
+            if re.match(r"^[0-9a-fA-F:.]{6,45}$", ip):
+                return ip
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def ea_api(path):
+    headers = {"Cookie": read_file(COOKIE_FILE), "User-Agent": UA,
+               "Accept": "application/json",
+               "Referer": "https://earnapp.com/dashboard",
+               "X-Requested-With": "XMLHttpRequest"}
+    req = urllib.request.Request("https://earnapp.com/dashboard" + path,
+                                 headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status, json.loads(r.read().decode())
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")[:200]
+    except Exception as exc:  # noqa: BLE001
+        return 0, str(exc)
+
+
+def add_blacklist(ip):
+    if not ip:
+        return
+    items = [x.strip() for x in read_file(BLACKLIST_FILE).splitlines()
+             if x.strip()]
+    if ip in items:
+        return
+    os.makedirs(BOT_DIR, exist_ok=True)
+    with open(BLACKLIST_FILE, "a", encoding="utf-8") as f:
+        f.write(ip + "\n")
+    log("blacklist +", ip)
+
+
+def my_device():
+    uuid = read_file("/etc/earnapp/uuid")
+    if not uuid:
+        return None
+    st, dev = ea_api("/api/devices")
+    if st != 200 or not isinstance(dev, list):
+        log("api fail", st, str(dev)[:120])
+        return None
+    return next((d for d in dev
+                 if isinstance(d, dict) and d.get("uuid") == uuid), None)
+
+
+def check():
+    if read_file(AUTO_FILE) != "1":
+        return
+    if not read_file(COOKIE_FILE):
+        log("no cookie, skip")
+        return
+    me = my_device()
+    if me is None:
+        log("device not found in account")
+        return
+    ban = me.get("banned")
+    if not isinstance(ban, dict):
+        log("green, uptime", me.get("uptime"))
+        return
+    ip = str(ban.get("ip") or "")
+    log("banned", ip, ban.get("reason"))
+    cur = public_ip()
+    if ip and cur and cur != ip:
+        log("current ip differs from ban, wait", cur)
+        return
+    add_blacklist(ip)
+    try:
+        last = float(read_file(STAMP_FILE) or 0)
+    except ValueError:
+        last = 0.0
+    if time.time() - last < COOLDOWN:
+        log("cooldown")
+        return
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(STAMP_FILE, "w", encoding="utf-8") as f:
+        f.write(str(time.time()))
+    log("running ghost")
+    try:
+        p = subprocess.run([GHOST, "4"], capture_output=True, text=True,
+                           timeout=900)
+        log("ghost rc", p.returncode,
+            (p.stdout or "").strip().replace("\n", " | "),
+            (p.stderr or "").strip())
+    except Exception as exc:  # noqa: BLE001
+        log("ghost error", repr(exc))
+    time.sleep(30)
+    me = my_device()
+    if me is not None:
+        log("after ghost banned=", bool(me.get("banned")),
+            "ips=", me.get("ips"))
+
+
+def main():
+    log("auto-ghost watchdog started")
+    while True:
+        try:
+            check()
+        except Exception as exc:  # noqa: BLE001
+            log("error", repr(exc))
+        time.sleep(INTERVAL)
+
+
+if __name__ == "__main__":
+    main()

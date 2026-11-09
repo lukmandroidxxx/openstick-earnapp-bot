@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenStick standalone auto-ghost watchdog
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/openstick-autogh
+Restart=always
+RestartSec=15
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
