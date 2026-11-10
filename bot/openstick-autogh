@@ -19,8 +19,10 @@ BLACKLIST_FILE = os.path.join(BOT_DIR, "ip_blacklist")
 AUTO_FILE = os.path.join(BOT_DIR, "auto_ghost")
 STATE_DIR = "/var/lib/tg-bot"
 STAMP_FILE = os.path.join(STATE_DIR, "last_ghost")
+FAILS_FILE = os.path.join(STATE_DIR, "ghost_fails")
 GHOST = "/usr/local/sbin/openstick-ghost"
 COOLDOWN = 600
+MAX_COOLDOWN = 3600
 INTERVAL = 180
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -107,6 +109,11 @@ def check():
     ban = me.get("banned")
     if not isinstance(ban, dict):
         log("green, uptime", me.get("uptime"))
+        try:
+            with open(FAILS_FILE, "w", encoding="utf-8") as f:
+                f.write("0")
+        except OSError:
+            pass
         return
     ip = str(ban.get("ip") or "")
     log("banned", ip, ban.get("reason"))
@@ -119,8 +126,14 @@ def check():
         last = float(read_file(STAMP_FILE) or 0)
     except ValueError:
         last = 0.0
-    if time.time() - last < COOLDOWN:
-        log("cooldown")
+    try:
+        fails = int(read_file(FAILS_FILE) or 0)
+    except ValueError:
+        fails = 0
+    # backoff: 10m, 20m, 40m, lalu maksimal 60m kalau ghost terus gagal
+    cooldown = min(COOLDOWN * (2 ** min(fails, 3)), MAX_COOLDOWN)
+    if time.time() - last < cooldown:
+        log("cooldown", int(cooldown), "s (fails=%d)" % fails)
         return
     os.makedirs(STATE_DIR, exist_ok=True)
     with open(STAMP_FILE, "w", encoding="utf-8") as f:
@@ -137,8 +150,13 @@ def check():
     time.sleep(30)
     me = my_device()
     if me is not None:
-        log("after ghost banned=", bool(me.get("banned")),
-            "ips=", me.get("ips"))
+        banned = bool(me.get("banned"))
+        log("after ghost banned=", banned, "ips=", me.get("ips"))
+        try:
+            with open(FAILS_FILE, "w", encoding="utf-8") as f:
+                f.write("0" if not banned else str(fails + 1))
+        except OSError:
+            pass
 
 
 def main():
