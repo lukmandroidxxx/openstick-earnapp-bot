@@ -22,6 +22,9 @@ BLACKLIST_FILE = os.path.join(BOT_DIR, "ip_blacklist")
 AUTO_FILE = os.path.join(BOT_DIR, "auto_ghost")
 NODES_FILE = os.path.join(BOT_DIR, "nodes")
 SSH_KEY = "/root/.ssh/id_master"
+EARN_FILE = os.path.join(STATE_DIR, "earnings_daily.json")
+PAYOUT_EMAIL_FILE = os.path.join(BOT_DIR, "payout_email")
+NOTIF_FILE = os.path.join(BOT_DIR, "daily_notify")
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
@@ -29,6 +32,8 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 MENU = {"inline_keyboard": [
     [{"text": "\U0001F4CA Status", "callback_data": "status"},
      {"text": "\U0001F4B0 Dashboard", "callback_data": "dash"}],
+    [{"text": "\U0001F4C8 Report", "callback_data": "report"},
+     {"text": "\U0001F4B8 Tarik Saldo", "callback_data": "wd_menu"}],
     [{"text": "\U0001F504 Reboot", "callback_data": "reboot"},
      {"text": "\U0001F47B Ghost MAC", "callback_data": "ghost"}],
     [{"text": "\u23FB Matikan (poweroff)", "callback_data": "off"}],
@@ -529,6 +534,12 @@ def poll_devices():
                             started = True
                         DEV_STATE[u] = {"uptime": up, "ts": now,
                                         "online": online, "data": d}
+                    try:
+                        devs = [d for d in dev if isinstance(d, dict)]
+                        estate, _erows, etotal = earn_state(devs)
+                        daily_notify(read_file(CHAT_FILE), estate, etotal)
+                    except Exception as exc:  # noqa: BLE001
+                        log("earn track:", exc)
                     my = next((d for d in dev if isinstance(d, dict) and
                                d.get("uuid") == my_uuid), None)
                     if my:
@@ -968,6 +979,274 @@ def nodes_help():
     return "Node: %s" % names
 
 
+# ------------------------------------------------- pendapatan harian + saldo
+WITHDRAW_METHODS = {
+    "pp": {"value": "paypal.com", "label": "PayPal", "min": 10.0},
+    "az": {"value": "amazon.com (US/Global)", "label": "Amazon US",
+           "min": 50.0},
+}
+
+# Nama tampilan kalau /etc/tg-bot/nodes tidak ada di node ini.
+UUID_NAMES = {
+    "sdk-node-4e3b43e982124a65bca569c2a8660be2": "semut13",
+    "sdk-node-1a3a2d78ae054cba94b96591f8919e0b": "semut12",
+    "sdk-node-666d4bdb574f4d7aaaab56429bccd662": "semut16",
+    "sdk-node-225b1c94a6444f018f7e5ef6f12293cd": "semut09",
+    "sdk-node-bc38a75beca1436fac64272e9dc38401": "semut04",
+    "sdk-node-cec0a0a824784dd488ac82467a98faec": "semut03",
+    "sdk-node-ca48d547ab69420b9e9794e9f521d14f": "semut14",
+    "sdk-node-04eb3a051e2d4d1996240f7d11728a16": "semut06",
+    "sdk-node-facbbc9805fb475f972a5f1b514ee62c": "semut05",
+    "sdk-node-b251b4d893534a4aa9b5fa3700a788fa": "semut02",
+    "sdk-node-6d01265a9a8348bcbe3f47adaada99fa": "semut11",
+    "sdk-node-0273ce2fbbf34f3fa56ed72c3277be10": "semut17",
+}
+
+
+def node_label(uuid, fallback):
+    for n in read_nodes():
+        if n.get("uuid") == uuid:
+            return n["name"]
+    return UUID_NAMES.get(uuid) or str(fallback)
+
+
+def _day_key():
+    return time.strftime("%Y-%m-%d", time.localtime())
+
+
+def _load_json(path):
+    try:
+        data = json.loads(read_file(path) or "{}")
+        if isinstance(data, dict):
+            return data
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
+def _save_json(path, data):
+    try:
+        write_file(path, json.dumps(data, sort_keys=True), 0o644)
+    except Exception as exc:  # noqa: BLE001
+        log("save", path, exc)
+
+
+def _device_total(d):
+    try:
+        return float(d.get("earned_total") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def earn_state(devs):
+    """Hitung pendapatan hari ini per device. Return (state, rows, total)."""
+    state = _load_json(EARN_FILE)
+    day = _day_key()
+    base = state.get("base")
+    if not isinstance(base, dict):
+        base = {}
+    if state.get("day") != day:
+        try:
+            prev = float(state.get("last_total") or 0)
+        except (TypeError, ValueError):
+            prev = 0.0
+        base = {}
+        for d in devs:
+            u = d.get("uuid")
+            if u:
+                base[u] = _device_total(d)
+        state = {"day": day, "base": base, "last_total": 0.0,
+                 "prev_day_total": prev, "notify_total": 0.0,
+                 "notify_ts": 0.0, "rolled": 1}
+
+    rows = []
+    total = 0.0
+    for d in devs:
+        u = d.get("uuid")
+        if not u:
+            continue
+        cur = _device_total(d)
+        b = base.get(u)
+        if b is None or cur < float(b):
+            base[u] = cur
+            b = cur
+        today = cur - float(b)
+        if today < 0:
+            today = 0.0
+        total += today
+        rows.append({"uuid": u, "today": today, "total": cur, "dev": d})
+    state["base"] = base
+    state["last_total"] = total
+    _save_json(EARN_FILE, state)
+    return state, rows, total
+
+
+def report_text():
+    if not read_file(COOKIE_FILE):
+        return ("\u26A0\uFE0F Cookie EarnApp belum diset.\n"
+                "Kirim cookie dulu lewat /setcookie.")
+    st, dev = ea_api("/api/devices")
+    if st != 200 or not isinstance(dev, list):
+        return "\u26A0\uFE0F Gagal ambil data EarnApp (status %s)." % st
+    devs = [d for d in dev if isinstance(d, dict)]
+    state, rows, total = earn_state(devs)
+
+    balance = 0.0
+    mst, money = ea_api("/api/money")
+    if mst == 200 and isinstance(money, dict):
+        try:
+            balance = float(money.get("balance") or 0)
+        except (TypeError, ValueError):
+            balance = 0.0
+
+    rows.sort(key=lambda r: r["today"], reverse=True)
+    lines = ["\U0001F4CA <b>REPORT HARI INI</b>",
+             "\U0001F552 %s WIB" % time.strftime("%d/%m/%Y %H:%M"),
+             "",
+             "\U0001F30D <b>Global hari ini: +%s</b>" % fmt_money(total),
+             "\U0001F4B0 Saldo akun: <b>%s</b>" % fmt_money(balance),
+             ""]
+    green = banned = 0
+    for r in rows:
+        d = r["dev"]
+        if isinstance(d.get("banned"), dict):
+            mark = "\U0001F6AB"
+            banned += 1
+        else:
+            mark = "\U0001F7E2"
+            green += 1
+        name = node_label(r["uuid"], d.get("title") or r["uuid"])
+        lines.append("%s <b>%s</b> \u2014 hari ini +%s \u00b7 total %s" % (
+            mark, html.escape(name), fmt_money(r["today"]),
+            fmt_money(r["total"])))
+    lines.append("")
+    lines.append("Hijau <b>%d</b> \u00b7 banned <b>%d</b> \u00b7 "
+                 "device <b>%d</b>" % (green, banned, len(rows)))
+    return "\n".join(lines)[:4000]
+
+
+def fresh_balance():
+    st, money = ea_api("/api/money")
+    if st == 200 and isinstance(money, dict):
+        try:
+            return float(money.get("balance") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    return None
+
+
+def withdraw_text(balance=None):
+    if balance is None:
+        balance = fresh_balance()
+    if balance is None:
+        return "\u26A0\uFE0F Gagal ambil saldo dari EarnApp."
+    lines = ["\U0001F4B8 <b>TARIK SALDO</b>", "",
+             "Saldo: <b>%s</b>" % fmt_money(balance), "",
+             "Minimum: PayPal $10 \u00b7 Amazon US $50", ""]
+    ready = [m for m in WITHDRAW_METHODS.values() if balance >= m["min"]]
+    if ready:
+        lines.append("Siap ditarik: <b>%s</b>" %
+                     ", ".join(m["label"] for m in ready))
+    else:
+        lines.append("Belum mencapai minimum penarikan.")
+    email = read_file(PAYOUT_EMAIL_FILE).strip()
+    if email:
+        lines.append("Email tujuan: <code>%s</code>" % html.escape(email))
+    else:
+        lines.append("Email tujuan belum diset.")
+        lines.append("Set: <code>/tarik pp email@kamu</code>")
+    return "\n".join(lines)
+
+
+def withdraw_keyboard(balance=None):
+    if balance is None:
+        balance = fresh_balance() or 0.0
+    rows = []
+    for code, m in WITHDRAW_METHODS.items():
+        if balance >= m["min"]:
+            rows.append([{
+                "text": "\U0001F4B8 %s (%s)" % (m["label"],
+                                                fmt_money(balance)),
+                "callback_data": "wd:" + code}])
+    rows.append([{"text": "\U0001F504 Muat ulang saldo",
+                  "callback_data": "wd_menu"}])
+    return {"inline_keyboard": rows}
+
+
+def do_redeem(chat_id, code):
+    m = WITHDRAW_METHODS.get(code)
+    if not m:
+        send(chat_id, "\u26A0\uFE0F Metode tidak dikenal.")
+        return
+    email = read_file(PAYOUT_EMAIL_FILE).strip()
+    if "@" not in email:
+        send(chat_id, "\u26A0\uFE0F Email tujuan belum diset.\n"
+                      "Format: <code>/tarik %s email@kamu</code>" % code)
+        return
+    balance = fresh_balance()
+    if balance is None:
+        send(chat_id, "\u26A0\uFE0F Gagal ambil saldo.")
+        return
+    if balance < m["min"]:
+        send(chat_id, "Saldo <b>%s</b> belum mencapai minimum <b>%s</b> "
+                      "untuk %s." % (fmt_money(balance), fmt_money(m["min"]),
+                                     m["label"]), MENU)
+        return
+    st, res = ea_api("/api/redeem", "POST",
+                     {"to": email, "payment_method": m["value"]})
+    if 200 <= st < 300:
+        send(chat_id, "\u2705 <b>Penarikan dikirim</b>\n\n"
+                      "Metode: <b>%s</b>\nSaldo ditarik: <b>%s</b>\n"
+                      "Tujuan: <code>%s</code>\n\n"
+                      "Cek email untuk konfirmasi dari EarnApp." % (
+                          m["label"], fmt_money(balance),
+                          html.escape(email)), MENU)
+    else:
+        send(chat_id, "\u26A0\uFE0F <b>Penarikan gagal</b> (status %s)\n"
+                      "<pre>%s</pre>" % (st, html.escape(str(res)[:400])),
+             MENU)
+
+
+def daily_notify(chat_id, state, total):
+    """Kirim notifikasi saat pendapatan harian bertambah / hari berganti."""
+    if not chat_id or read_file(NOTIF_FILE) == "0":
+        return
+    now = time.time()
+    try:
+        last_total = float(state.get("notify_total") or 0)
+    except (TypeError, ValueError):
+        last_total = 0.0
+    try:
+        last_ts = float(state.get("notify_ts") or 0)
+    except (TypeError, ValueError):
+        last_ts = 0.0
+
+    if state.get("rolled"):
+        try:
+            prev = float(state.get("prev_day_total") or 0)
+        except (TypeError, ValueError):
+            prev = 0.0
+        state["rolled"] = 0
+        state["notify_ts"] = now
+        state["notify_total"] = total
+        _save_json(EARN_FILE, state)
+        if prev > 0:
+            send(chat_id, "\U0001F319 <b>Hari baru</b>\n"
+                          "Pendapatan kemarin: <b>+%s</b>\n"
+                          "Hitungan hari ini dimulai." % fmt_money(prev))
+        return
+
+    naik = total - last_total
+    if naik >= 0.01 and now - last_ts >= 1800:
+        send(chat_id, "\U0001F4C8 <b>Pendapatan hari ini naik</b>\n\n"
+                      "+%s sejak terakhir\n"
+                      "Total hari ini: <b>+%s</b>" % (
+                          fmt_money(naik), fmt_money(total)))
+        state["notify_ts"] = now
+        state["notify_total"] = total
+        _save_json(EARN_FILE, state)
+
+
 
 # ---------------------------------------------------------------- dispatch
 def is_authorized(chat_id):
@@ -1025,6 +1304,9 @@ def handle_message(msg):
                       "/off \u2014 matikan device (poweroff)\n"
                       "/ghost \u2014 ganti MAC + IP publik (tanpa reboot)\n"
                       "/setcookie \u2014 simpan cookie dashboard\n"
+                      "/report \u2014 pendapatan hari ini per node + global\n"
+                      "/tarik \u2014 saldo & tarik ke PayPal/Amazon\n"
+                      "/notif on|off \u2014 notifikasi pendapatan naik\n"
                       "/blacklist \u2014 IP yang diblokir EarnApp\n"
                       "/auto on|off \u2014 auto-ghost saat banned\n"
                       "/all \u2014 status semua node\n"
@@ -1068,6 +1350,44 @@ def handle_message(msg):
         send(chat_id, status_text(), MENU)
     elif low.startswith("/dash"):
         send(chat_id, dash_text(), MENU)
+    elif low.startswith("/report"):
+        send(chat_id, report_text(), MENU)
+    elif low.startswith("/tarik") or low.startswith("/withdraw"):
+        parts = text.split()
+        args = parts[1:]
+        if not args:
+            bal = fresh_balance()
+            send(chat_id, withdraw_text(bal), withdraw_keyboard(bal))
+        elif args[0] in WITHDRAW_METHODS and len(args) > 1:
+            email = args[1].strip()
+            if "@" not in email:
+                send(chat_id, "\u26A0\uFE0F Email tidak valid.\n"
+                              "Format: <code>/tarik %s email@kamu</code>"
+                              % args[0])
+                return
+            write_file(PAYOUT_EMAIL_FILE, email)
+            bal = fresh_balance() or 0.0
+            send(chat_id, "\u2705 Email tujuan disimpan: <code>%s</code>\n"
+                          "Saldo sekarang: <b>%s</b>\n\n"
+                          "Tekan <b>Tarik Saldo</b> untuk melanjutkan." % (
+                              html.escape(email), fmt_money(bal)), MENU)
+        else:
+            send(chat_id, "Format:\n"
+                          "<code>/tarik</code> \u2014 lihat saldo\n"
+                          "<code>/tarik pp email@kamu</code> \u2014 PayPal\n"
+                          "<code>/tarik az email@kamu</code> \u2014 Amazon",
+                 MENU)
+    elif low.startswith("/notif"):
+        arg = text[len("/notif"):].strip().lower()
+        if arg in ("on", "off"):
+            write_file(NOTIF_FILE, "1" if arg == "on" else "0")
+            send(chat_id, "Notifikasi pendapatan harian: <b>%s</b>"
+                 % arg.upper(), MENU)
+        else:
+            cur = "OFF" if read_file(NOTIF_FILE) == "0" else "ON"
+            send(chat_id, "Notifikasi pendapatan harian: <b>%s</b>\n"
+                          "Ubah: <code>/notif on</code> atau "
+                          "<code>/notif off</code>" % cur, MENU)
     elif low.startswith("/reboot"):
         arg = text[len("/reboot"):].strip()
         if arg:
@@ -1165,6 +1485,38 @@ def handle_callback(cb):
     elif data == "dash":
         answer_cb(cb_id, "Mengambil dashboard...")
         edit(chat_id, mid, dash_text())
+    elif data == "report":
+        answer_cb(cb_id, "Menghitung report...")
+        edit(chat_id, mid, report_text())
+    elif data == "wd_menu":
+        answer_cb(cb_id, "Mengambil saldo...")
+        bal = fresh_balance()
+        edit(chat_id, mid, withdraw_text(bal))
+        send(chat_id, "Pilih metode penarikan:", withdraw_keyboard(bal))
+    elif data.startswith("wd:"):
+        code = data[3:]
+        m = WITHDRAW_METHODS.get(code)
+        if not m:
+            answer_cb(cb_id, "Metode tidak dikenal")
+            return
+        answer_cb(cb_id)
+        email = read_file(PAYOUT_EMAIL_FILE).strip()
+        if "@" not in email:
+            send(chat_id, "\u26A0\uFE0F Email tujuan belum diset.\n"
+                          "Kirim: <code>/tarik %s email@kamu</code>" % code)
+            return
+        send(chat_id, "\u26A0\uFE0F <b>Konfirmasi tarik saldo</b>\n\n"
+                      "Metode: <b>%s</b>\nTujuan: <code>%s</code>\n\n"
+                      "Saldo akan ditarik seluruhnya. Lanjutkan?" % (
+                          m["label"], html.escape(email)),
+             {"inline_keyboard": [[
+                 {"text": "\u2705 Tarik sekarang",
+                  "callback_data": "wdgo:" + code},
+                 {"text": "\u274C Batal", "callback_data": "cancel"}]]})
+    elif data.startswith("wdgo:"):
+        code = data[5:]
+        answer_cb(cb_id, "Memproses penarikan...")
+        do_redeem(chat_id, code)
     elif data == "reboot":
         answer_cb(cb_id)
         edit(chat_id, mid, "\u26A0\uFE0F Yakin reboot device sekarang?")
