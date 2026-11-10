@@ -1418,9 +1418,9 @@ def handle_message(msg):
                 send(chat_id, "Node tidak dikenal.\n" + nodes_help())
                 return
             send(chat_id, "\U0001F47B Ghost <b>%s</b> \u2014 tunggu "
-                          "\u00b130\u201390 detik..." % node["name"])
+                          "\u00b11\u20137 menit (verifikasi IP ke EarnApp)..." % node["name"])
             rc, out, err = run_on(
-                node, "/usr/local/sbin/openstick-ghost 3", timeout=200)
+                node, "/usr/local/sbin/openstick-ghost 3", timeout=420)
             send(chat_id, "\U0001F47B <b>%s</b>\n<pre>%s</pre>" % (
                 node["name"], html.escape((out or err)[-1500:])), MENU)
         else:
@@ -1569,7 +1569,17 @@ def main():
     except ValueError:
         offset = 0
 
-    me = api("getMe")
+    me = None
+    for attempt in range(12):
+        try:
+            me = api("getMe")
+            break
+        except Exception as exc:  # noqa: BLE001
+            log("getMe gagal (%d): %s" % (attempt + 1, exc))
+            time.sleep(10)
+    if not me:
+        log("getMe terus gagal, keluar")
+        sys.exit(1)
     log("bot started:", me.get("result", {}).get("username"))
 
     threading.Thread(target=poll_devices, daemon=True).start()

@@ -1,15 +1,24 @@
 #!/bin/bash
 # OpenStick: rotate wlan0 MAC and reconnect until the new public IP is not
-# in /etc/tg-bot/ip_blacklist.
+# in /etc/tg-bot/ip_blacklist AND (kalau cookie tersedia) tidak langsung
+# dibanned oleh EarnApp.
 #
-# Safety: the MAC used before this run is restored if every attempt fails,
-# so the node is never left offline after a failed IP change.
+# Pemakaian: openstick-ghost [attempts] [ban_wait] [max_total]
+#   attempts  : jumlah percobaan MAC/IP (default 4)
+#   ban_wait  : detik menunggu verifikasi EarnApp per IP (default 90)
+#   max_total : batas total waktu detik (default 300)
+#
+# Safety: the MAC used before this run is restored if every attempt fails
+# (atau kalau proses dihentikan), so the node is never left offline.
 # The MAC/IP that worked is saved to /etc/tg-bot/good_mac + ip_good.
 set -u
 BL="/etc/tg-bot/ip_blacklist"
 STATE="/etc/tg-bot"
 IF=wlan0
 ATTEMPTS="${1:-4}"
+BAN_WAIT="${2:-90}"
+MAX_TOTAL="${3:-300}"
+START=$(date +%s)
 
 prof() {
     local p
@@ -35,6 +44,71 @@ wait_net() {
     return 1
 }
 
+# Cek status device ini di EarnApp untuk IP saat ini.
+# 0 = hijau, 1 = banned di IP ini, 2 = belum pasti (API error / IP belum terlihat)
+ban_check() {
+    python3 - "$1" <<'PY'
+import json
+import sys
+import urllib.request
+
+ip = sys.argv[1]
+try:
+    cookie = open("/etc/tg-bot/cookie", encoding="utf-8").read().strip()
+    uuid = open("/etc/earnapp/uuid", encoding="utf-8").read().strip()
+except OSError:
+    print("pending (cookie/uuid tidak ada)")
+    sys.exit(2)
+if not cookie or not uuid:
+    print("pending (cookie/uuid kosong)")
+    sys.exit(2)
+try:
+    req = urllib.request.Request(
+        "https://earnapp.com/dashboard/api/devices",
+        headers={"Cookie": cookie,
+                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/126.0 Safari/537.36",
+                 "Accept": "application/json",
+                 "Referer": "https://earnapp.com/dashboard",
+                 "X-Requested-With": "XMLHttpRequest"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        devices = json.loads(resp.read().decode("utf-8", "replace"))
+except Exception as exc:  # noqa: BLE001
+    print("pending (api error: %s)" % exc)
+    sys.exit(2)
+
+me = next((d for d in devices
+           if isinstance(d, dict) and d.get("uuid") == uuid), None)
+if me is None:
+    print("pending (device tidak ada di akun)")
+    sys.exit(2)
+ban = me.get("banned")
+if isinstance(ban, dict):
+    if str(ban.get("ip") or "") == ip:
+        print("banned %s" % ip)
+        sys.exit(1)
+    # Ban lama masih tercatat; tunggu device check-in dengan IP baru.
+    print("pending (ban lama %s)" % ban.get("ip"))
+    sys.exit(2)
+# banned == null berarti device hijau. Daftar "ips" di dashboard sering
+# terlambat update, jadi jangan dijadikan syarat.
+print("green %s" % ip)
+sys.exit(0)
+PY
+}
+
+add_bl() {
+    local ip="$1"
+    [ -z "$ip" ] && return
+    touch "$BL" 2>/dev/null
+    grep -qxF "$ip" "$BL" 2>/dev/null || echo "$ip" >> "$BL" 2>/dev/null
+}
+
+time_left() {
+    echo $((MAX_TOTAL - ($(date +%s) - START)))
+}
+
 P=$(prof)
 [ -z "$P" ] && { echo "ERROR: no wifi profile"; exit 1; }
 
@@ -53,8 +127,28 @@ restore_mac() {
     nmcli con up "$P" >/dev/null 2>&1
 }
 
+accept() {
+    local mac="$1" ip="$2" note="$3"
+    mkdir -p "$STATE" 2>/dev/null
+    echo "$mac" > "$STATE/good_mac" 2>/dev/null
+    echo "$ip" > "$STATE/ip_good" 2>/dev/null
+    [ -n "$note" ] && echo "$note"
+    echo "profile: $P"
+    echo "mac: $(cat /sys/class/net/$IF/address 2>/dev/null)"
+    echo "ip: $ip"
+    exit 0
+}
+
+# Kalau proses dihentikan di tengah jalan, balikkan MAC lama.
+trap 'echo "TERM: restoring previous MAC"; restore_mac; exit 143' TERM INT HUP
+
 i=1
 while [ "$i" -le "$ATTEMPTS" ]; do
+    if [ "$(time_left)" -lt 45 ]; then
+        echo "waktu habis sebelum attempt $i"
+        break
+    fi
+
     MAC=$(python3 -c "import random;print('02:%02x:%02x:%02x:%02x:%02x'%tuple(random.randrange(256) for _ in range(5)))")
     nmcli con modify "$P" wifi.cloned-mac-address "$MAC" >/dev/null 2>&1
     nmcli con down "$P" >/dev/null 2>&1
@@ -65,21 +159,41 @@ while [ "$i" -le "$ATTEMPTS" ]; do
     if [ -z "$IP" ]; then
         echo "attempt $i: no internet after 25s, retry"
     elif [ -f "$BL" ] && grep -qxF "$IP" "$BL"; then
-        echo "attempt $i: $IP blacklisted, retry"
+        echo "attempt $i: $IP blacklisted (lokal), retry"
     else
-        mkdir -p "$STATE" 2>/dev/null
-        echo "$MAC" > "$STATE/good_mac" 2>/dev/null
-        echo "$IP" > "$STATE/ip_good" 2>/dev/null
-        echo "profile: $P"
-        echo "mac: $(cat /sys/class/net/$IF/address 2>/dev/null)"
-        echo "ip: $IP"
-        exit 0
+        # Verifikasi ke EarnApp sebelum menerima IP ini, supaya satu kali
+        # ghost bisa melewati beberapa IP yang sudah dibanned.
+        verdict=2
+        waited=0
+        limit="$BAN_WAIT"
+        left=$(time_left)
+        if [ "$left" -lt "$limit" ]; then
+            limit=$((left - 10))
+            [ "$limit" -lt 15 ] && limit=15
+        fi
+        while [ "$waited" -lt "$limit" ]; do
+            OUT=$(ban_check "$IP")
+            verdict=$?
+            [ "$verdict" -ne 2 ] && break
+            sleep 10
+            waited=$((waited + 10))
+        done
+        if [ "$verdict" -eq 1 ]; then
+            echo "attempt $i: $IP banned by earnapp ($OUT), blacklist + retry"
+            add_bl "$IP"
+        else
+            if [ "$verdict" -eq 0 ]; then
+                accept "$MAC" "$IP" "verified green on earnapp ($OUT)"
+            else
+                accept "$MAC" "$IP" "WARN: belum terverifikasi ($OUT), terima $IP"
+            fi
+        fi
     fi
     i=$((i + 1))
 done
 
 # Semua percobaan gagal: balikkan MAC lama supaya node tetap online.
-echo "WARN: all $ATTEMPTS attempts failed, restoring previous MAC"
+echo "WARN: all attempts failed, restoring previous MAC"
 restore_mac
 IP=$(wait_net 25) || IP=""
 echo "profile: $P"
