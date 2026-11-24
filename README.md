@@ -31,6 +31,22 @@ rollback ke IP lama yang banned.
 
 ---
 
+## Filter IP wifi.id (whitelist/blacklist) — #JAMU WIFI ID
+
+Arsip filter lama yang pernah dipakai di node semut sekarang tersedia sebagai
+installer standalone: [`bot/jamu-wifi-id`](bot/jamu-wifi-id/README.md).
+Tidak perlu token Telegram; cookie EarnApp opsional (dianjurkan).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lukmandroidxxx/openstick-earnapp-bot/main/bot/jamu-wifi-id/install.sh | sudo bash
+```
+
+Singkatnya: IP yang masuk **blacklist** → ganti MAC + reconnect (tanpa reboot),
+IP yang hijau masuk **whitelist** lalu dikunci. Cocok untuk banyak device
+sekaligus; detail opsi ada di README folder tersebut.
+
+---
+
 ## Persyaratan
 
 - OpenStick / UZ801 sudah terpasang **Debian** dan bisa SSH

@@ -1,6 +1,8 @@
 * text=auto
 *.sh text eol=lf
 bot/openstick-wifi-watchdog text eol=lf
+bot/jamu-wifi-id/*.sh text eol=lf
+bot/jamu-wifi-id/*.service text eol=lf
 bot/*.service text eol=lf
 bot/tgbot.py text eol=lf
 deploy_node.py text eol=lf

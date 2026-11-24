@@ -1,0 +1,19 @@
+[Unit]
+Description=#JAMU WIFI ID - IP whitelist/blacklist filter untuk EarnApp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/jamu-wifi-id
+ExecStart=/usr/local/sbin/jamu-wifi-id
+Restart=always
+RestartSec=15
+TimeoutStartSec=infinity
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jamu-wifi-id
+
+[Install]
+WantedBy=multi-user.target

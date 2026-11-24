@@ -6,6 +6,7 @@ token.txt
 
 # real blacklist (optional)
 blacklist.txt
+!bot/jamu-wifi-id/examples/blacklist.txt
 
 # python
 __pycache__/

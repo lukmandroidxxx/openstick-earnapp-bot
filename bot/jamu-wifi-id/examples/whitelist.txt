@@ -1,0 +1,3 @@
+# Contoh whitelist: satu IP publik per baris.
+# IP yang sudah hijau akan dikunci di sini dan tidak di-ghost lagi.
+# Baris komentar diawali # dan diabaikan oleh filter.
